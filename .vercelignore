@@ -1,0 +1,84 @@
+# =========================================================
+# VIRTUAL ENVIRONMENTS
+# =========================================================
+
+venv/
+venv312/
+.venv/
+
+
+# =========================================================
+# DATASETS
+# =========================================================
+
+data/
+*.csv
+
+
+# =========================================================
+# AWS DEPLOYMENT FILES
+# =========================================================
+
+aws/
+.aws-sam/
+
+
+# =========================================================
+# LOCAL MODEL FILES NOT USED BY VERCEL
+# =========================================================
+
+models/random_forest_model.pkl
+models/fraud_graph.pt
+models/gnn_fraud_ring_results.csv
+models/fraud_rings.csv
+models/isolation_forest_model.pkl
+models/isolation_forest_scaler.pkl
+models/autoencoder_model.keras
+models/autoencoder_scaler.pkl
+models/autoencoder_threshold.pkl
+models/autoencoder_features.pkl
+models/gnn_fraud_model.pth
+models/xgboost_model.pkl
+models/logistic_regression_model.pkl
+models/scaler.pkl
+models/threshold_results.csv
+models/model_comparison.csv
+models/best_threshold.txt
+
+
+# =========================================================
+# PYTHON CACHE
+# =========================================================
+
+__pycache__/
+*.pyc
+*.pyo
+
+
+# =========================================================
+# GIT
+# =========================================================
+
+.git/
+.gitignore
+
+
+# =========================================================
+# JUPYTER
+# =========================================================
+
+.ipynb_checkpoints/
+
+
+# =========================================================
+# OTHER LOCAL FILES
+# =========================================================
+
+
+
+*.log
+*.tmp
+*.bak
+main.py
+api/main.py
+.vercel/

@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Bank Fraud Detection Serverless API
+
+Globals:
+
+  Function:
+
+    Timeout: 30
+
+    MemorySize: 2048
+
+    Runtime: python3.12
+
+
+Resources:
+
+  FraudDetectionFunction:
+
+    Type: AWS::Serverless::Function
+
+    Properties:
+
+      FunctionName:
+        bank-fraud-detection-api
+
+      CodeUri: .
+
+      Handler:
+        lambda_function.lambda_handler
+
+      Events:
+
+        FraudPredictionAPI:
+
+          Type: Api
+
+          Properties:
+
+            Path:
+              /predict
+
+            Method:
+              post
+
+
+Outputs:
+
+  FraudAPI:
+
+    Description:
+      API Gateway endpoint
+
+    Value:
+      !Sub >
+        https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/predict
