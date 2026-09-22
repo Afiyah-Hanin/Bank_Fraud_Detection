@@ -2,10 +2,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
 import joblib
 import pandas as pd
 import numpy as np
-import tensorflow as tf
 
 
 # =========================================================
@@ -27,90 +27,163 @@ app = FastAPI(
         "Random Forest, Tuned XGBoost, Isolation Forest, "
         "Autoencoder and Graph Neural Network Fraud Ring Intelligence"
     ),
-    version="4.0"
+    version="4.1"
 )
 
 
 # =========================================================
-# LOAD SUPERVISED MODELS
+# LAZY MODEL STORAGE
 # =========================================================
+# Models are NOT loaded when the server starts.
+# They are loaded only when their endpoint is requested.
 
-print("Loading Random Forest model...")
+random_forest_model = None
 
-random_forest_model = joblib.load(
-    MODELS_DIR / "random_forest_model.pkl"
-)
+tuned_xgboost_model = None
 
+isolation_forest_model = None
+isolation_forest_scaler = None
 
-print("Loading Tuned XGBoost model...")
+autoencoder_model = None
+autoencoder_scaler = None
+autoencoder_threshold = None
 
-tuned_xgboost_model = joblib.load(
-    MODELS_DIR / "tuned_xgboost_model.pkl"
-)
-
-
-# =========================================================
-# LOAD ISOLATION FOREST
-# =========================================================
-
-print("Loading Isolation Forest model...")
-
-isolation_forest_model = joblib.load(
-    MODELS_DIR / "isolation_forest_model.pkl"
-)
-
-isolation_forest_scaler = joblib.load(
-    MODELS_DIR / "isolation_forest_scaler.pkl"
-)
+gnn_fraud_rings = None
 
 
 # =========================================================
-# LOAD AUTOENCODER
+# MODEL LOADERS
 # =========================================================
 
-print("Loading Autoencoder model...")
+def get_random_forest_model():
 
-autoencoder_model = tf.keras.models.load_model(
-    MODELS_DIR / "autoencoder_model.keras"
-)
+    global random_forest_model
 
-autoencoder_scaler = joblib.load(
-    MODELS_DIR / "autoencoder_scaler.pkl"
-)
+    if random_forest_model is None:
 
-autoencoder_threshold = float(
-    joblib.load(
-        MODELS_DIR / "autoencoder_threshold.pkl"
+        print("Loading Random Forest model...")
+
+        random_forest_model = joblib.load(
+            MODELS_DIR / "random_forest_model.pkl"
+        )
+
+        print("Random Forest model loaded.")
+
+    return random_forest_model
+
+
+def get_tuned_xgboost_model():
+
+    global tuned_xgboost_model
+
+    if tuned_xgboost_model is None:
+
+        print("Loading Tuned XGBoost model...")
+
+        tuned_xgboost_model = joblib.load(
+            MODELS_DIR / "tuned_xgboost_model.pkl"
+        )
+
+        print("Tuned XGBoost model loaded.")
+
+    return tuned_xgboost_model
+
+
+def get_isolation_forest():
+
+    global isolation_forest_model
+    global isolation_forest_scaler
+
+    if isolation_forest_model is None:
+
+        print("Loading Isolation Forest model...")
+
+        isolation_forest_model = joblib.load(
+            MODELS_DIR / "isolation_forest_model.pkl"
+        )
+
+        isolation_forest_scaler = joblib.load(
+            MODELS_DIR / "isolation_forest_scaler.pkl"
+        )
+
+        print("Isolation Forest model loaded.")
+
+    return (
+        isolation_forest_model,
+        isolation_forest_scaler
     )
-)
 
 
-# =========================================================
-# LOAD GNN FRAUD RING RESULTS
-# =========================================================
+def get_autoencoder():
 
-GNN_RESULTS_PATH = MODELS_DIR / "gnn_fraud_ring_results.csv"
+    global autoencoder_model
+    global autoencoder_scaler
+    global autoencoder_threshold
 
-print("Loading GNN Fraud Ring Intelligence results...")
+    if autoencoder_model is None:
 
-if GNN_RESULTS_PATH.exists():
+        print("Loading TensorFlow / Autoencoder...")
 
-    gnn_fraud_rings = pd.read_csv(
-        GNN_RESULTS_PATH
+        # TensorFlow is imported ONLY when Autoencoder is used.
+        import tensorflow as tf
+
+        autoencoder_model = tf.keras.models.load_model(
+            MODELS_DIR / "autoencoder_model.keras"
+        )
+
+        autoencoder_scaler = joblib.load(
+            MODELS_DIR / "autoencoder_scaler.pkl"
+        )
+
+        autoencoder_threshold = float(
+            joblib.load(
+                MODELS_DIR / "autoencoder_threshold.pkl"
+            )
+        )
+
+        print("Autoencoder loaded.")
+
+    return (
+        autoencoder_model,
+        autoencoder_scaler,
+        autoencoder_threshold
     )
 
-    print(
-        f"GNN fraud ring results loaded: "
-        f"{len(gnn_fraud_rings)} groups"
-    )
 
-else:
+def get_gnn_fraud_rings():
 
-    print(
-        "WARNING: GNN fraud ring results file not found!"
-    )
+    global gnn_fraud_rings
 
-    gnn_fraud_rings = pd.DataFrame()
+    if gnn_fraud_rings is None:
+
+        results_path = (
+            MODELS_DIR /
+            "gnn_fraud_ring_results.csv"
+        )
+
+        print("Loading GNN fraud ring intelligence...")
+
+        if results_path.exists():
+
+            gnn_fraud_rings = pd.read_csv(
+                results_path
+            )
+
+            print(
+                "GNN fraud ring results loaded: "
+                f"{len(gnn_fraud_rings)} groups"
+            )
+
+        else:
+
+            print(
+                "WARNING: GNN fraud ring results "
+                "file not found."
+            )
+
+            gnn_fraud_rings = pd.DataFrame()
+
+    return gnn_fraud_rings
 
 
 # =========================================================
@@ -142,37 +215,28 @@ class Transaction(BaseModel):
 
 def create_input_data(transaction: Transaction):
 
+    transaction_type = (
+        transaction.transaction_type.upper()
+    )
+
     transaction_types = [
-
         "CASH_OUT",
-
         "DEBIT",
-
         "PAYMENT",
-
         "TRANSFER"
-
     ]
 
-    encoded_types = {}
+    if transaction_type not in transaction_types:
 
-    for transaction_type in transaction_types:
-
-        encoded_types[
-            f"type_{transaction_type}"
-        ] = (
-
-            1
-
-            if transaction.transaction_type
-            == transaction_type
-
-            else 0
-
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid transaction type. "
+                "Use CASH_OUT, DEBIT, PAYMENT or TRANSFER."
+            )
         )
 
-
-    input_data = pd.DataFrame([{
+    return pd.DataFrame([{
 
         "step":
             transaction.step,
@@ -193,21 +257,18 @@ def create_input_data(transaction: Transaction):
             transaction.newbalanceDest,
 
         "type_CASH_OUT":
-            encoded_types["type_CASH_OUT"],
+            int(transaction_type == "CASH_OUT"),
 
         "type_DEBIT":
-            encoded_types["type_DEBIT"],
+            int(transaction_type == "DEBIT"),
 
         "type_PAYMENT":
-            encoded_types["type_PAYMENT"],
+            int(transaction_type == "PAYMENT"),
 
         "type_TRANSFER":
-            encoded_types["type_TRANSFER"]
+            int(transaction_type == "TRANSFER")
 
     }])
-
-
-    return input_data
 
 
 # =========================================================
@@ -223,7 +284,13 @@ def home():
             "Advanced Bank Fraud Detection API is running!",
 
         "version":
-            "4.0",
+            "4.1",
+
+        "deployment":
+            "Render",
+
+        "model_loading":
+            "Lazy loading enabled",
 
         "available_transaction_models": [
 
@@ -259,22 +326,47 @@ def home():
 @app.get("/health")
 def health_check():
 
+    gnn_results_path = (
+        MODELS_DIR /
+        "gnn_fraud_ring_results.csv"
+    )
+
     return {
 
-        "status": "healthy",
+        "status":
+            "healthy",
 
-        "models": {
+        "model_loading":
+            "lazy",
 
-            "Random Forest": True,
+        "models_available": {
 
-            "Tuned XGBoost": True,
+            "Random Forest":
+                (
+                    MODELS_DIR /
+                    "random_forest_model.pkl"
+                ).exists(),
 
-            "Isolation Forest": True,
+            "Tuned XGBoost":
+                (
+                    MODELS_DIR /
+                    "tuned_xgboost_model.pkl"
+                ).exists(),
 
-            "Autoencoder": True,
+            "Isolation Forest":
+                (
+                    MODELS_DIR /
+                    "isolation_forest_model.pkl"
+                ).exists(),
+
+            "Autoencoder":
+                (
+                    MODELS_DIR /
+                    "autoencoder_model.keras"
+                ).exists(),
 
             "GNN Fraud Ring Intelligence":
-                not gnn_fraud_rings.empty
+                gnn_results_path.exists()
 
         }
 
@@ -288,10 +380,9 @@ def health_check():
 @app.post("/predict")
 def predict(transaction: Transaction):
 
-
-    # =====================================================
-    # VALIDATE TRANSACTION TYPE
-    # =====================================================
+    transaction.transaction_type = (
+        transaction.transaction_type.upper()
+    )
 
     valid_transaction_types = [
 
@@ -304,12 +395,6 @@ def predict(transaction: Transaction):
         "TRANSFER"
 
     ]
-
-
-    transaction.transaction_type = (
-        transaction.transaction_type.upper()
-    )
-
 
     if (
         transaction.transaction_type
@@ -327,11 +412,6 @@ def predict(transaction: Transaction):
 
         )
 
-
-    # =====================================================
-    # CREATE INPUT DATA
-    # =====================================================
-
     input_data = create_input_data(
         transaction
     )
@@ -343,17 +423,17 @@ def predict(transaction: Transaction):
 
     if transaction.model_choice == "Random Forest":
 
+        model = get_random_forest_model()
+
         fraud_probability = float(
 
-            random_forest_model.predict_proba(
+            model.predict_proba(
                 input_data
             )[0][1]
 
         )
 
-
         threshold = 0.50
-
 
         prediction = (
 
@@ -364,7 +444,6 @@ def predict(transaction: Transaction):
             else "LEGITIMATE"
 
         )
-
 
         return {
 
@@ -381,7 +460,7 @@ def predict(transaction: Transaction):
                 ),
 
             "threshold":
-                threshold * 100
+                50.0
 
         }
 
@@ -392,17 +471,17 @@ def predict(transaction: Transaction):
 
     elif transaction.model_choice == "Tuned XGBoost":
 
+        model = get_tuned_xgboost_model()
+
         fraud_probability = float(
 
-            tuned_xgboost_model.predict_proba(
+            model.predict_proba(
                 input_data
             )[0][1]
 
         )
 
-
         threshold = 0.50
-
 
         prediction = (
 
@@ -413,7 +492,6 @@ def predict(transaction: Transaction):
             else "LEGITIMATE"
 
         )
-
 
         return {
 
@@ -430,7 +508,7 @@ def predict(transaction: Transaction):
                 ),
 
             "threshold":
-                threshold * 100
+                50.0
 
         }
 
@@ -441,31 +519,30 @@ def predict(transaction: Transaction):
 
     elif transaction.model_choice == "Isolation Forest":
 
+        (
+            model,
+            scaler
+        ) = get_isolation_forest()
 
-        scaled_data = (
-            isolation_forest_scaler.transform(
-                input_data
-            )
+        scaled_data = scaler.transform(
+            input_data
         )
-
 
         anomaly_score = float(
 
-            -isolation_forest_model.decision_function(
+            -model.decision_function(
                 scaled_data
             )[0]
 
         )
-
 
         raw_prediction = int(
 
-            isolation_forest_model.predict(
+            model.predict(
                 scaled_data
             )[0]
 
         )
-
 
         prediction = (
 
@@ -476,7 +553,6 @@ def predict(transaction: Transaction):
             else "LEGITIMATE"
 
         )
-
 
         risk_score = max(
 
@@ -491,7 +567,6 @@ def predict(transaction: Transaction):
             )
 
         )
-
 
         return {
 
@@ -525,21 +600,20 @@ def predict(transaction: Transaction):
 
     elif transaction.model_choice == "Autoencoder":
 
+        (
+            model,
+            scaler,
+            threshold_value
+        ) = get_autoencoder()
 
-        scaled_data = (
-            autoencoder_scaler.transform(
-                input_data
-            )
+        scaled_data = scaler.transform(
+            input_data
         )
 
-
-        reconstructed_data = (
-            autoencoder_model.predict(
-                scaled_data,
-                verbose=0
-            )
+        reconstructed_data = model.predict(
+            scaled_data,
+            verbose=0
         )
-
 
         reconstruction_error = float(
 
@@ -547,8 +621,7 @@ def predict(transaction: Transaction):
 
                 np.square(
 
-                    scaled_data
-                    -
+                    scaled_data -
                     reconstructed_data
 
                 )
@@ -557,38 +630,33 @@ def predict(transaction: Transaction):
 
         )
 
-
-        threshold_value = float(
-            autoencoder_threshold
-        )
-
-
         prediction = (
 
             "FRAUD"
 
-            if reconstruction_error
-            > threshold_value
+            if reconstruction_error >
+            threshold_value
 
             else "LEGITIMATE"
 
         )
 
+        if threshold_value > 0:
 
-        # Relative risk score
+            risk_score = min(
 
-        risk_score = min(
+                100.0,
 
-            100.0,
+                (
+                    reconstruction_error /
+                    threshold_value
+                ) * 50
 
-            (
-                reconstruction_error
-                /
-                threshold_value
             )
-            * 50
 
-        )
+        else:
+
+            risk_score = 100.0
 
 
         return {
@@ -613,7 +681,7 @@ def predict(transaction: Transaction):
 
             "threshold":
                 round(
-                    threshold_value,
+                    float(threshold_value),
                     6
                 )
 
@@ -631,6 +699,7 @@ def predict(transaction: Transaction):
             status_code=400,
 
             detail={
+
                 "error":
                     "Invalid model selected",
 
@@ -658,7 +727,9 @@ def predict(transaction: Transaction):
 @app.get("/gnn/summary")
 def gnn_summary():
 
-    if gnn_fraud_rings.empty:
+    results = get_gnn_fraud_rings()
+
+    if results.empty:
 
         raise HTTPException(
 
@@ -671,60 +742,53 @@ def gnn_summary():
 
         )
 
-
     total_groups = int(
-        len(gnn_fraud_rings)
+        len(results)
     )
-
 
     critical_rings = int(
 
         (
-            gnn_fraud_rings["risk_level"]
+            results["risk_level"]
             == "CRITICAL"
         ).sum()
 
     )
 
-
     high_risk_rings = int(
 
         (
-            gnn_fraud_rings["risk_level"]
+            results["risk_level"]
             == "HIGH"
         ).sum()
 
     )
 
-
     medium_risk_rings = int(
 
         (
-            gnn_fraud_rings["risk_level"]
+            results["risk_level"]
             == "MEDIUM"
         ).sum()
 
     )
 
-
     low_risk_rings = int(
 
         (
-            gnn_fraud_rings["risk_level"]
+            results["risk_level"]
             == "LOW"
         ).sum()
 
     )
 
-
     predicted_fraud_accounts = int(
 
-        gnn_fraud_rings[
+        results[
             "predicted_fraud_accounts"
         ].sum()
 
     )
-
 
     return {
 
@@ -762,8 +826,9 @@ def get_fraud_rings(
     limit: int = 20
 ):
 
+    results = get_gnn_fraud_rings()
 
-    if gnn_fraud_rings.empty:
+    if results.empty:
 
         raise HTTPException(
 
@@ -773,18 +838,11 @@ def get_fraud_rings(
 
         )
 
-
-    results = gnn_fraud_rings.copy()
-
-
-    # =====================================================
-    # FILTER BY RISK LEVEL
-    # =====================================================
+    filtered_results = results.copy()
 
     if risk_level is not None:
 
         risk_level = risk_level.upper()
-
 
         valid_risk_levels = [
 
@@ -797,7 +855,6 @@ def get_fraud_rings(
             "LOW"
 
         ]
-
 
         if risk_level not in valid_risk_levels:
 
@@ -812,31 +869,20 @@ def get_fraud_rings(
 
             )
 
+        filtered_results = filtered_results[
 
-        results = results[
-
-            results["risk_level"]
+            filtered_results["risk_level"]
             == risk_level
 
         ]
 
-
-    # =====================================================
-    # SORT BY SUSPICION SCORE
-    # =====================================================
-
-    results = results.sort_values(
+    filtered_results = filtered_results.sort_values(
 
         by="suspicion_score",
 
         ascending=False
 
     )
-
-
-    # =====================================================
-    # LIMIT RESULTS
-    # =====================================================
 
     limit = min(
 
@@ -846,20 +892,20 @@ def get_fraud_rings(
 
     )
 
-
-    results = results.head(limit)
-
+    filtered_results = filtered_results.head(
+        limit
+    )
 
     return {
 
         "total_results":
-            len(results),
+            len(filtered_results),
 
         "risk_level_filter":
             risk_level,
 
         "fraud_rings":
-            results.replace(
+            filtered_results.replace(
                 {
                     np.nan: None
                 }
@@ -877,8 +923,9 @@ def get_fraud_rings(
 @app.get("/gnn/fraud-rings/{ring_id}")
 def get_fraud_ring(ring_id: int):
 
+    results = get_gnn_fraud_rings()
 
-    if gnn_fraud_rings.empty:
+    if results.empty:
 
         raise HTTPException(
 
@@ -888,14 +935,12 @@ def get_fraud_ring(ring_id: int):
 
         )
 
+    ring = results[
 
-    ring = gnn_fraud_rings[
-
-        gnn_fraud_rings["ring_id"]
+        results["ring_id"]
         == ring_id
 
     ]
-
 
     if ring.empty:
 
@@ -906,7 +951,6 @@ def get_fraud_ring(ring_id: int):
             detail=f"Fraud ring {ring_id} not found."
 
         )
-
 
     ring_data = (
 
@@ -919,7 +963,6 @@ def get_fraud_ring(ring_id: int):
         .to_dict()
 
     )
-
 
     return {
 
