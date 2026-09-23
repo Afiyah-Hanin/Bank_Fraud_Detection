@@ -9,3 +9,5 @@ xgboost
 tensorflow
 streamlit
 shap
+requests
+matplotlib
